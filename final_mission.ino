@@ -275,23 +275,22 @@ void normalPlay() {
 
       holonomic(40, theta, omega);
 
-      if (abs(currentYaw) < alignErrorGap) {
+      if ((abs(157 - ballPosX) < rotationErrorGap) && (abs(setpointFling - ballPosY) < flingErrorGap)) {
+        beep();
+
         holonomic(0, 0, 0);
         isDribble = false;
 
-        if ((abs(157 - ballPosX) < rotationErrorGap) && (abs(setpointFling - ballPosY) < flingErrorGap)) {
-          beep();
           
-          unsigned long loopTimer = millis();
-          while (1) {
-            getIMU();
-            heading(100, 90, 0);
-            if (millis() - loopTimer >= 250) break;
-          }
-
-          shoot();
-          reload();
+        unsigned long loopTimer = millis();
+        while (1) {
+          getIMU();
+          heading(100, 90, 0);
+          if (millis() - loopTimer >= 250) break;
         }
+
+        shoot();
+        reload();
       }
     } else {
       // หมุนหาบอล
