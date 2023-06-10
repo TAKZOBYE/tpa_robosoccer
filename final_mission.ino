@@ -10,16 +10,16 @@ POP32_Pixy2 pixy;
 #define rotationKp 0.35
 #define rotationKi 0.0
 #define rotationKd 0.0
-#define rotationErrorGap 15
-float rotationError, rotationPvError, rotationI, rotationD, rotationW;
+#define rotationErrorGap 15  // default 15
+float rotationError, rotationPvError, rotationI, rotationD;
 
 // fling Variable
 #define flingKp 1.5
 #define flingKi 0.0
 #define flingKd 0.0
-#define flingErrorGap 20
-float setpointFling = 180;
-float flingError, flingPvError, flingI, flingD, flingSpeed;
+#define flingErrorGap 20  // default 20
+int setpointFling = 180;
+float flingError, flingPvError, flingI, flingD;
 
 // align Variable
 #define alignKp 2.75
@@ -107,7 +107,7 @@ void reload() {
 
   if (timer >= 2000) {
     motor(4, -reloadSpd);  // เลื่อนก้านยิ่งไปข้างหน้า
-    delay(500);            //ก่อน 0.5 วินาที
+    delay(500);            // ก่อน 0.5 วินาที
     motor(4, reloadSpd);
     timer = 0;
     for (int i = 0; i < 2000; i++) {
@@ -122,6 +122,11 @@ void reload() {
 }
 
 void wheel(int s1, int s2, int s3) {
+
+  // if (s2 != 0) {
+  //   s2 = s2 < 0 ? s2 - 3 : s2 + 3;
+  // }
+
   // Must to check if motor not equal
   motor(1, s1);
   motor(2, s2);
@@ -164,11 +169,17 @@ void holonomic(float spd, float theta, float omega) {
 }
 
 void checkWhiteLine() {
-  int backSpeed = 50;
+  int backSpeed = 45;
 
-  int middle1 = 1820;
-  int middle2 = 1555;
-  int middle3 = 577;
+  // Test Map
+  int middle1 = 1753;
+  int middle2 = 1615;
+  int middle3 = 479;
+
+  // Real Map
+  // int middle1 = 1834;
+  // int middle2 = 1632;
+  // int middle3 = 420;
 
   float sensor1 = analog(1);
   float sensor2 = analog(2);
@@ -181,12 +192,44 @@ void checkWhiteLine() {
   } else if (sensor3 > middle3) {
     holonomic(backSpeed, 135, 0);
   }
+}
 
-  // oled.clear();
-  // oled.text(1, 0, "%f          ", sensor1);
-  // oled.text(2, 0, "%f          ", sensor2);
-  // oled.text(3, 0, "%f          ", sensor3);
-  // oled.show();
+void readWhiteLine() {
+  float sensor1 = analog(1);
+  float sensor2 = analog(2);
+  float sensor3 = analog(3);
+
+  oled.clear();
+  oled.text(1, 0, "%f          ", sensor1);
+  oled.text(2, 0, "%f          ", sensor2);
+  oled.text(3, 0, "%f          ", sensor3);
+  oled.show();
+}
+
+void penalty() {
+  // Yellow = 2
+  // Blue 3
+
+  int penaltyColor = 3;  // Make Ternary Condition More
+
+  if (pixy.updateBlocks() && pixy.sigSize[penaltyColor]) {
+    float screenWidth = 315.0f;
+    signature firstSig = pixy.sigInfo[penaltyColor][0];
+    signature secondSig = pixy.sigInfo[penaltyColor][1];
+
+    signature mostWidthObject = firstSig.width > secondSig.width ? firstSig : secondSig;
+    bool isLeftSide = (screenWidth / 2) > mostWidthObject.x;
+
+    int diff = 0;
+    float targetX = isLeftSide ? mostWidthObject.x - (mostWidthObject.width / 2) + diff : mostWidthObject.x + (mostWidthObject.width / 2) - diff;
+
+    float angle = (targetX / screenWidth * 60.0f) - 30.0f;
+    int xDiff = abs(targetX - (screenWidth / 2));
+
+    holonomic(xDiff, isLeftSide ? 0 : 180, -angle);
+    delay(350);
+    ao();
+  }
 }
 
 /*
@@ -244,14 +287,52 @@ void penalty() {
 }
 */
 
-void normalPlay() {
-  oled.clear();
-  oled.text(1, 0, "%d     ", isDribble ? 1 : 0);
-  oled.show();
+void setupShoot() {
+  while (1) {
+    if (SW_A()) {
+      reload();
+    }
+    if (SW_B()) {
+      shoot();
+    }
+    if (SW_OK()) {
+      reload();
+      shoot();
+    }
+  }
+}
 
+void setupNormalPlay() {
+  zeroYaw();
+  reload();
+
+  while (!SW_A()) {
+    if (SW_B()) {
+      zeroYaw();
+    }
+
+    if (SW_OK()) {
+      reload();
+      shoot();
+      reload();
+    }
+
+    getIMU();
+    oled.text(0, 0, "Yaw  = %f     ", currentYaw);
+    oled.text(2, 0, "KBOB = %d     ", knob(2, 3));
+    // KNOB 2 = Opposite team is Yellow
+    // KNOB 3 = Opposite team is Blue
+
+    oled.show();
+  }
+}
+
+int duplicateBeep = 0;
+
+void loopNormalPlay() {
   // ไม่เจอบอล
   if (!pixy.updateBlocks() || !pixy.sigSize[1]) {
-    int idleSpeed = 40;
+    int idleSpeed = 35;
 
     holonomic(0, 0, ((rotationError / abs(rotationError)) || 1) * idleSpeed);
   } else {
@@ -273,24 +354,72 @@ void normalPlay() {
       float theta = lastYaw < 0 ? -alignVec : 270 + alignVec;
       float omega = lastYaw < 0 ? 15 : -15;
 
+      // oled.clear();
+      // oled.text(1, 0, "%d      ", ballPosY);
+      // oled.text(2, 0, "%d      ", setpointFling);
+      // oled.text(3, 0, "%f      ", alignError);
+      // oled.text(4, 0, "%f      ", alignVec);
+      // oled.text(5, 0, "%f      ", lastYaw);
+      // oled.text(6, 0, "%f      ", theta);
+      // oled.show();
+
       holonomic(40, theta, omega);
 
-      if ((abs(157 - ballPosX) < rotationErrorGap) && (abs(setpointFling - ballPosY) < flingErrorGap)) {
+      if (abs(currentYaw) < alignErrorGap) {
+        wheel(0, 0, 0);
+        delay(100);
+
         beep();
 
-        holonomic(0, 0, 0);
+        duplicateBeep += 1;
+
+        // if (duplicateBeep == 2) {
+          unsigned long loopTimer = millis();
+          while (1) {
+            getIMU();
+            heading(100, 90, 0);
+            if (millis() - loopTimer >= 250) break;
+          }
+
+          reload();
+          shoot();
+          reload();
+
+          /*
+          int knobValue = knob(2, 3);
+
+          signature oppositeGoal = pixy.sigInfo[knobValue][0];
+          bool isFoundOppositeGoal = oppositeGoal.width > 0;
+
+          if (!isFoundOppositeGoal) {
+            holonomic(50, 0, 180);
+            delay(400);
+
+            if (pixy.updateBlocks()) {
+              oppositeGoal = pixy.sigInfo[knobValue][0];
+              if (abs(157 - oppositeGoal.x) < 20) {
+                zeroYaw();
+              }
+            }
+          } else {
+            unsigned long loopTimer = millis();
+            while (1) {
+              getIMU();
+              heading(80, 90, 0);
+              if (millis() - loopTimer >= 250) break;
+            }
+
+            reload();
+            shoot();
+            reload();
+
+            duplicateBeep = 0;
+
+          }
+          */
+        // }
+
         isDribble = false;
-
-          
-        unsigned long loopTimer = millis();
-        while (1) {
-          getIMU();
-          heading(100, 90, 0);
-          if (millis() - loopTimer >= 250) break;
-        }
-
-        shoot();
-        reload();
       }
     } else {
       // หมุนหาบอล
@@ -299,7 +428,7 @@ void normalPlay() {
       rotationD = constrain(rotationD, -100, 100);
       rotationD = rotationError - rotationPvError;
       rotationPvError = rotationError;
-      rotationW = (rotationError * rotationKp) + (rotationI * rotationKi) + (rotationD * rotationKd);
+      float rotationW = (rotationError * rotationKp) + (rotationI * rotationKi) + (rotationD * rotationKd);
       rotationW = constrain(rotationW, -100, 100);
 
       flingError = setpointFling - ballPosY;
@@ -307,17 +436,49 @@ void normalPlay() {
       flingI = constrain(flingI, -100, 100);
       flingD = flingError - flingPvError;
       flingPvError = flingError;
-      flingSpeed = flingError * flingKp + flingI * flingKi + flingD * flingKd;
+      float flingSpeed = flingError * flingKp + flingI * flingKi + flingD * flingKd;
       flingSpeed = constrain(flingSpeed, -100, 100);
 
       holonomic(flingSpeed, 90, rotationW);
 
       // เงื่อนไขเข้าสู่การเลี้ยงลูกบอล
       // แกน X ใกล้ลูกบอล กับ แกน Y ใก้ลูกบอล
-      if ((abs(rotationError) < rotationErrorGap) && (abs(flingError) < flingErrorGap)) {
+
+      if ((abs(rotationError) <= rotationErrorGap) && (abs(flingError) <= flingErrorGap)) {
         wheel(0, 0, 0);
         lastYaw = currentYaw;
         isDribble = true;
+
+        // oled.clear();
+        // oled.text(1, 0, "isDribble = true");
+        // oled.show();
+
+      } else {
+        duplicateBeep = 0;
+
+        // 3.0, 3.0 || 3.0, 6.65
+        if (flingSpeed < 3.0 || rotationW < 4.5) {
+          // flingSpeed *= 1.5;
+          // rotationW *= 1.5;
+          // holonomic(flingSpeed, 90, rotationW);
+          holonomic(45, 90, 0);
+
+          // MAKE MORE
+          // delay(200);
+          // flingSpeed *= 1.25;
+          // rotationW *= 1.25;
+          // holonomic(flingSpeed, 90, rotationW);
+        }
+
+        // oled.clear();
+        // oled.text(1, 0, "if fuck stop");
+        // oled.text(2, 0, "%f         ", flingSpeed);
+        // oled.text(3, 0, "%f         ", flingError);
+        // oled.text(4, 0, "%d         ", flingErrorGap);
+        // oled.text(5, 0, "%f         ", rotationW);
+        // oled.text(6, 0, "%f         ", rotationError);
+        // oled.text(7, 0, "%d         ", rotationErrorGap);
+        // oled.show();
       }
     }
 
@@ -329,37 +490,16 @@ void setup() {
   // Serial.begin(9600);
   oled.mode(2);
   pixy.init();
-  zeroYaw();
-  reload();
 
-  while (!SW_A()) {
-    if (SW_B()) {
-      zeroYaw();
-    }
-
-    getIMU();
-    oled.text(0, 0, "Yaw=%f     ", currentYaw);
-    oled.show();
-  }
-
-  // penalty();
-
-  // while (1) {
-  //   if (SW_A()) {
-  //     reload();
-  //   }
-  //   if (SW_B()) {
-  //     shoot();
-  //   }
-  //   if (SW_OK()) {
-  //     reload();
-  //     shoot();
-  //   }
-  // }
+  setupNormalPlay();
+  // setupShoot();
 }
 
 void loop() {
-  normalPlay();
+  // holonomic(1.50, 90, 5.95);
+  loopNormalPlay();
+  // penalty();
+  // readWhiteLine();
 
   // oled.clear();
   // if (pixy.updateBlocks()) {
